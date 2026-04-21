@@ -1,0 +1,2 @@
+build: cd demo && npm install && npm run build
+start: cd demo && npm run preview
