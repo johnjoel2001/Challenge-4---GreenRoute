@@ -1,8 +1,6 @@
 import { LOCATIONS, LOC_IDS } from './locations';
 
-// ═══════════════════════════════════════════════════════════════
-// WEATHER SYSTEM — moving fronts that cross the continental US
-// ═══════════════════════════════════════════════════════════════
+// Weather system with moving weather fronts
 
 function createWeatherFront(seed) {
   const r = () => { seed = (seed * 16807 + 0) % 2147483647; return seed / 2147483647; };
@@ -72,12 +70,7 @@ function weatherInfluence(locId) {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// WEATHER EVENTS — cold snaps, storms, heat waves, solar booms
-//
-// Accelerated timeline: events fire every ~3-6 sim hours so they
-// are visible in a class demo that runs for a few minutes.
-// ═══════════════════════════════════════════════════════════════
+// Weather events: cold snaps, storms, heat waves, solar booms
 
 // Active weather events: { locId: { type, remaining, intensity } }
 let _weatherEvents = {};
@@ -132,34 +125,32 @@ function applyWeatherEvent(locId, solar, wind, hydro, carbon) {
       // Heavy clouds/snow kill solar, heating demand spikes carbon
       s *= 0.10;         // near-zero solar (snow/overcast)
       w *= 1.2;          // cold wind picks up slightly
-      c *= 3.0;          // heating demand → heavy fossil generation
-      label = '🥶 Cold Snap';
+      c *= 3.0;          // heating demand increases carbon
+      label = 'Cold Snap';
       break;
     case 'storm':
       s *= 0.05;         // near-zero solar
       w = Math.min(25, w * 2.5 + 8); // very high wind (but turbines may curtail)
       if (w > 18) w *= 0.4; // curtailment above cut-off
       c *= 2.5;          // grid instability
-      label = '⛈️ Storm';
+      label = 'Storm';
       break;
     case 'heat_wave':
       s *= 1.1;          // slightly more sun (clear skies)
       w *= 0.3;          // stagnant air
-      c *= 2.5;          // AC demand spikes → more fossil
-      label = '🔥 Heat Wave';
+      c *= 2.5;          // AC demand spikes increase carbon
+      label = 'Heat Wave';
       break;
     case 'solar_boom':
       s = Math.min(1000, s * 1.8 + 200); // exceptional solar
       c *= 0.3;          // very low carbon (grid flooded with solar)
-      label = '☀️ Solar Boom';
+      label = 'Solar Boom';
       break;
   }
   return { solar: Math.max(0, s), wind: Math.max(0, w), hydro: Math.max(0, h), carbon: Math.max(20, c), eventLabel: label };
 }
 
-// ═══════════════════════════════════════════════════════════════
 // SENSOR SNAPSHOT — computed once per timestep from weather
-// ═══════════════════════════════════════════════════════════════
 
 let _snapshot = null;
 export function getSnapshot() { return _snapshot; }
@@ -210,7 +201,7 @@ function computeSnapshot(utcHour, utilisations) {
     const windFloodBonus = wind > 8 ? (wind - 8) / 12 * loc.baseCarbonIntensity * 0.3 : 0;
     let carbon = Math.max(20, loc.baseCarbonIntensity * demandFactor - renewOffset - solarFloodBonus - windFloodBonus + (Math.random() - 0.5) * 12);
 
-    // ── Apply weather events (cold snaps, storms, etc.) ──
+    // Apply weather events (cold snaps, storms, etc.)
     const evResult = applyWeatherEvent(locId, solar, wind, hydro, carbon);
     solar = evResult.solar;
     wind = evResult.wind;
@@ -235,7 +226,7 @@ function computeSnapshot(utcHour, utilisations) {
       cloudCover: wx.cloudCover,
       rain: wx.rain,
       windExtra: wx.windExtra,
-      weatherEvent: evResult.eventLabel,  // null or '🥶 Cold Snap' etc.
+      weatherEvent: evResult.eventLabel,  // null or 'Cold Snap', 'Storm', etc.
     };
   }
   return snap;
@@ -248,9 +239,7 @@ export function getRenewableFraction(utcHour, locId) { return _snapshot?.[locId]
 export function getCarbonIntensity(utcHour, locId)   { return _snapshot?.[locId]?.carbon ?? 300; }
 export function getEnergyCost(utcHour, locId)        { return _snapshot?.[locId]?.cost ?? 0.10; }
 
-// ═══════════════════════════════════════════════════════════════
 // JOB GENERATOR
-// ═══════════════════════════════════════════════════════════════
 
 const JOB_NAMES_FLEX = [
   'ML Training Batch', 'Batch Analytics Pipeline', 'Database Backup',
@@ -298,9 +287,7 @@ export function generateJob(utcHour) {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// TRAINED POLICY LOADER (training curves / metadata for UI)
-// ═══════════════════════════════════════════════════════════════
+// Load trained policy and metadata
 
 let _trainedPolicy = null;
 let _trainingMeta = null;
@@ -317,51 +304,48 @@ let _ppoWeights = null;  // loaded neural network weights
 
 export async function loadTrainedPolicy() {
   try {
-    const res = await fetch('/trained_policy.json');
+    const res = await fetch('/all_agents_results.json');
     const data = await res.json();
-    _trainedPolicy = data.policy;
     _trainingMeta = data.metadata;
-    _trainingCurves = data.training_curves;
     _finalMetrics = data.final_metrics;
-    _ppoWeights = data.ppo_weights || null;
     _policyReady = true;
-    const ep = data.metadata.ppo_episodes || data.metadata.dqn_episodes || '?';
-    console.log(`[GreenRoute] PPO policy loaded (${ep} episodes, ${data.metadata.ppo_gradient_steps || '?'} gradient steps).`);
-    if (_ppoWeights) {
-      console.log(`[GreenRoute] Neural network: ${_ppoWeights.layers?.length || 0} backbone layers, `
-        + `${_ppoWeights.actor_layers?.length || 0} actor layers`);
-      _loadNNWeights();
+
+    // Load all agent weights
+    if (data.ppo_weights) {
+      _ppoWeights = data.ppo_weights;
     }
+    if (data.dqn_weights) {
+      _dqnWeights = data.dqn_weights;
+    }
+
+    const agents = data.metadata.agents_trained || ['PPO', 'Q-Learning', 'DQN', 'Random', 'Greedy'];
+    console.log(`[GreenRoute] Loaded results for ${agents.length} agents:`, agents);
+    console.log(`[GreenRoute] Final metrics:`, data.final_metrics);
     return data;
   } catch (e) {
-    console.warn('[GreenRoute] No offline policy — PPO from scratch:', e);
+    console.warn('[GreenRoute] Could not load results:', e);
     _policyReady = false;
     return null;
   }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// PPO (PROXIMAL POLICY OPTIMIZATION) AGENT
-//
-// Pre-trained offline on 3000 episodes with stochastic weather
-// (4 seasons × 6 weather regimes × cold snaps × storms).
-//
-// Architecture (loaded from trained_policy.json):
-//   Backbone: 67 → 256 (LayerNorm+Tanh) → 256 (LayerNorm+Tanh)
-//   Actor:    256 → 64 (Tanh) → 7 (softmax)     [take 1-5 for CA,TX,VA,OR,AZ]
-//   Critic:   256 → 64 (Tanh) → 1                [V(s) value estimate]
-//
-// In the browser we run INFERENCE ONLY — no learning.
-// The network was trained with PPO (GAE λ=0.95, clip ε=0.2, 10 epochs).
-// ═══════════════════════════════════════════════════════════════
+// Trained agents: offline inference only
 
 const N_ACTIONS = LOC_IDS.length;  // 5
+let _selectedAgent = 'PPO';  // Current agent for decision-making
 
-// ── Loaded NN layers (set by _loadNNWeights) ──
+// PPO network layers
 let _nnBackbone = [];   // [{type, weight, bias, eps?}]
 let _nnActor = [];      // [{type, weight, bias}]
 let _nnCritic = [];     // [{type, weight, bias}]
-let _nnLoaded = false;
+let _nnLoadedPPO = false;
+
+// DQN weights and network
+let _dqnWeights = null;
+let _dqnFeature = [];   // [{type, weight, bias, eps?}]
+let _dqnValue = [];     // [{type, weight, bias}]
+let _dqnAdvantage = []; // [{type, weight, bias}]
+let _nnLoadedDQN = false;
 
 let _stepCount = 0;
 let _rewardHistory = [];
@@ -370,7 +354,16 @@ let _recentActions = [];  // rolling window of last 30 actions
 const RECENT_WINDOW = 30;
 let _policyEntropy = 0;
 
-// ── Learning metrics (exported for UI) ──
+// Agent-specific metrics storage
+const _agentMetrics = {
+  'PPO': { stepCount: 0, rewardHistory: [], actionCounts: {}, recentActions: [], policyEntropy: 0 },
+  'DQN': { stepCount: 0, rewardHistory: [], actionCounts: {}, recentActions: [], policyEntropy: 0 },
+  'Q-Learning': { stepCount: 0, rewardHistory: [], actionCounts: {}, recentActions: [], policyEntropy: 0 },
+  'Random': { stepCount: 0, rewardHistory: [], actionCounts: {}, recentActions: [], policyEntropy: 0 },
+  'Greedy': { stepCount: 0, rewardHistory: [], actionCounts: {}, recentActions: [], policyEntropy: 0 },
+};
+
+// Learning metrics
 export function getLearningMetrics() {
   const recent = _rewardHistory.slice(-50);
   const avgReward = recent.length > 0 ? recent.reduce((a, b) => a + b, 0) / recent.length : 0;
@@ -380,21 +373,20 @@ export function getLearningMetrics() {
   for (const a of _recentActions) recentDist[a] = (recentDist[a] || 0) + 1;
   return {
     epsilon: _policyEntropy,
-    statesExplored: _nnLoaded ? 1 : 0,
+    statesExplored: (_nnLoadedPPO || _nnLoadedDQN) ? 1 : 0,
     totalSteps: _stepCount,
     avgReward50: avgReward,
     actionDistribution: recentDist,
-    qTableSize: _nnLoaded ? 1 : 0,
+    qTableSize: (_nnLoadedPPO || _nnLoadedDQN) ? 1 : 0,
   };
 }
 
-// ── Load pre-trained weights from JSON ──
-function _loadNNWeights() {
+function _loadNNWeightsPPO() {
   if (!_ppoWeights) return;
   _nnBackbone = (_ppoWeights.layers || []).map(l => ({
     type: l.type,
-    weight: l.weight,   // 2D array [out, in]
-    bias: l.bias,       // 1D array [out]
+    weight: l.weight,
+    bias: l.bias,
     eps: l.eps || 1e-5,
   }));
   _nnActor = (_ppoWeights.actor_layers || []).map(l => ({
@@ -403,8 +395,62 @@ function _loadNNWeights() {
   _nnCritic = (_ppoWeights.critic_layers || []).map(l => ({
     weight: l.weight, bias: l.bias,
   }));
-  _nnLoaded = true;
-  console.log('[GreenRoute] NN weights loaded for browser inference.');
+  _nnLoadedPPO = true;
+  console.log('[GreenRoute] PPO weights loaded.');
+}
+
+function _loadNNWeightsDQN() {
+  if (!_dqnWeights) return;
+  _dqnFeature = (_dqnWeights.feature || []).map(l => ({
+    type: l.type,
+    weight: l.weight,
+    bias: l.bias,
+    eps: l.eps || 1e-5,
+  }));
+  _dqnValue = (_dqnWeights.value_stream || []).map(l => ({
+    type: l.type,
+    weight: l.weight,
+    bias: l.bias,
+  }));
+  _dqnAdvantage = (_dqnWeights.advantage_stream || []).map(l => ({
+    type: l.type,
+    weight: l.weight,
+    bias: l.bias,
+  }));
+  _nnLoadedDQN = true;
+  console.log('[GreenRoute] DQN weights loaded.');
+}
+
+export function setSelectedAgent(agent) {
+  // Save current agent's metrics
+  if (_agentMetrics[_selectedAgent]) {
+    _agentMetrics[_selectedAgent] = {
+      stepCount: _stepCount,
+      rewardHistory: [..._rewardHistory],
+      actionCounts: { ..._actionCounts },
+      recentActions: [..._recentActions],
+      policyEntropy: _policyEntropy,
+    };
+  }
+
+  // Switch agent
+  _selectedAgent = agent;
+
+  // Load new agent's metrics
+  if (_agentMetrics[agent]) {
+    _stepCount = _agentMetrics[agent].stepCount;
+    _rewardHistory = [..._agentMetrics[agent].rewardHistory];
+    _actionCounts = { ..._agentMetrics[agent].actionCounts };
+    _recentActions = [..._agentMetrics[agent].recentActions];
+    _policyEntropy = _agentMetrics[agent].policyEntropy;
+  }
+
+  if (agent === 'PPO' && _ppoWeights && !_nnLoadedPPO) {
+    _loadNNWeightsPPO();
+  } else if (agent === 'DQN' && _dqnWeights && !_nnLoadedDQN) {
+    _loadNNWeightsDQN();
+  }
+  console.log(`[GreenRoute] Agent switched to ${agent}, steps=${_stepCount}`);
 }
 
 function initPPO() {
@@ -421,14 +467,13 @@ function initPPO() {
 const PUE_MAP = { CA: 1.15, TX: 1.25, VA: 1.20, OR: 1.10, AZ: 1.30 };
 const CAP_MAP = { CA: 5000, TX: 4500, VA: 6000, OR: 3500, AZ: 4000 };
 
-// ── Build 67-dim state vector (matches Python env exactly) ──
 // 35 per-location + 20 weather event indicators + 12 global
 const EVENT_TYPES = ['cold_snap', 'storm', 'heat_wave', 'solar_boom'];
 const EVENT_LABEL_MAP = {
-  '🥶 Cold Snap': 'cold_snap',
-  '⛈️ Storm': 'storm',
-  '🔥 Heat Wave': 'heat_wave',
-  '☀️ Solar Boom': 'solar_boom',
+  'Cold Snap': 'cold_snap',
+  'Storm': 'storm',
+  'Heat Wave': 'heat_wave',
+  'Solar Boom': 'solar_boom',
 };
 
 function extractFeatures47(snap, originId) {
@@ -505,7 +550,6 @@ function extractFeatures47(snap, originId) {
   return f;  // length = 67 (35 + 20 + 12)
 }
 
-// ── NN inference primitives ──
 function _linearForward(layer, input) {
   // layer.weight: [outDim][inDim], layer.bias: [outDim]
   const W = layer.weight;
@@ -547,22 +591,21 @@ function _softmax(logits) {
   return exps.map(x => x / sum);
 }
 
-// ── Full forward pass through backbone → actor/critic ──
 function nnForward(features) {
   // Backbone: [Linear, LayerNorm, (Tanh implied)] × N
   let x = features;
   for (let i = 0; i < _nnBackbone.length; i++) {
     const layer = _nnBackbone[i];
-    if (layer.type === 'linear') {
+    if (layer.type === 'Linear') {
       x = _linearForward(layer, x);
-    } else if (layer.type === 'layernorm') {
+    } else if (layer.type === 'LayerNorm') {
       x = _layerNormForward(layer, x);
       x = _tanh(x);  // Tanh follows LayerNorm in our architecture
     }
   }
   const backbone_out = x;
 
-  // Actor head: Linear → Tanh → Linear → softmax
+  // Actor head: Linear, Tanh, Linear, softmax
   let actor_x = backbone_out;
   for (let i = 0; i < _nnActor.length; i++) {
     actor_x = _linearForward(_nnActor[i], actor_x);
@@ -571,7 +614,7 @@ function nnForward(features) {
   // All 7 logits: [local=0, CA=1, TX=2, VA=3, OR=4, AZ=5, hold=6]
   const allLogits = actor_x;
 
-  // Route actions (1-5) → browser LOC_IDS [CA, TX, VA, OR, AZ]
+  // Route actions (1-5) map to browser LOC_IDS [CA, TX, VA, OR, AZ]
   const routeLogits = allLogits.slice(1, 1 + N_ACTIONS);
   const routeProbs = _softmax(routeLogits);
 
@@ -583,7 +626,7 @@ function nnForward(features) {
   const full7 = [localLogit, ...routeLogits, holdLogit];
   const fullProbs = _softmax(full7);
 
-  // Critic head: Linear → Tanh → Linear
+  // Critic head: Linear, Tanh, Linear
   let critic_x = backbone_out;
   for (let i = 0; i < _nnCritic.length; i++) {
     critic_x = _linearForward(_nnCritic[i], critic_x);
@@ -601,7 +644,6 @@ function nnForward(features) {
   };
 }
 
-// ── Greedy fallback (when NN not loaded) ──
 function greedyFallback(snap, feasible) {
   let best = feasible[0], bestCarbon = Infinity;
   for (const a of feasible) {
@@ -611,7 +653,6 @@ function greedyFallback(snap, feasible) {
   return best;
 }
 
-// ── Compute reward (for reward tracking display) ──
 function computeReward(snap, originId, destId) {
   const origin = snap[originId];
   const dest = snap[destId];
@@ -624,11 +665,27 @@ function computeReward(snap, originId, destId) {
   return carbonSave * 2.5 + renewBonus - equityPen;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// AGENT DECISION — Pre-trained PPO neural network
-// ═══════════════════════════════════════════════════════════════
+// AGENT DECISION — Selects agent based on _selectedAgent
 
 export function agentDecide(job, snap) {
+  // Dispatch to the appropriate agent
+  if (_selectedAgent === 'PPO' && _nnLoadedPPO) {
+    return agentDecidePPO(job, snap);
+  } else if (_selectedAgent === 'DQN' && _nnLoadedDQN) {
+    return agentDecideDQN(job, snap);
+  } else if (_selectedAgent === 'Greedy') {
+    return agentDecideGreedy(job, snap);
+  } else if (_selectedAgent === 'Random') {
+    return agentDecideRandom(job, snap);
+  } else if (_selectedAgent === 'Q-Learning') {
+    // Q-Learning not implemented yet, fallback to Greedy
+    return agentDecideGreedy(job, snap);
+  }
+  // Fallback to Greedy if agent not available
+  return agentDecideGreedy(job, snap);
+}
+
+function agentDecidePPO(job, snap) {
   if (job.type === 'PINNED') {
     const s = snap[job.origin];
     return {
@@ -656,13 +713,14 @@ export function agentDecide(job, snap) {
   }
   if (feasible.length === 0) feasible.push(LOC_IDS.indexOf(job.origin));
 
-  let action, prob, value, probs, routeProbs, localProb = 0, holdProb = 0;
+  let action, prob, value, probs, routeProbs, fullProbs, localProb = 0, holdProb = 0;
 
-  if (_nnLoaded) {
-    // ── Neural network inference (all 7 actions) ──
+  if (_nnLoadedPPO) {
+    // Neural network inference (all 7 actions)
     const features = extractFeatures47(snap, job.origin);
     const result = nnForward(features);
     routeProbs = result.routeProbs;
+    fullProbs = result.fullProbs;
     value = result.value;
     localProb = result.localProb;
     holdProb = result.holdProb;
@@ -677,7 +735,7 @@ export function agentDecide(job, snap) {
     action = bestRouteAction;
     prob = bestRouteProb;
 
-    // ── Carbon-aware safety layer ──
+    // Carbon-aware safety layer
     // Only override the NN when the chosen DC is dramatically worse
     // than the best available. A 1.5× threshold lets the NN spread
     // load across DCs that are reasonably clean, while still catching
@@ -693,13 +751,13 @@ export function agentDecide(job, snap) {
       prob = routeProbs[action] || 0.5;
     }
 
-    probs = routeProbs;
+    probs = fullProbs;
   } else {
     // Fallback: lowest carbon (when NN not loaded)
     action = greedyFallback(snap, feasible);
     prob = 0.5;
     value = 0;
-    probs = new Array(N_ACTIONS).fill(1 / N_ACTIONS);
+    probs = new Array(7).fill(1 / 7);  // 7 actions for consistency
   }
 
   const dest = LOC_IDS[action];
@@ -710,10 +768,14 @@ export function agentDecide(job, snap) {
   _rewardHistory.push(reward);
   if (_rewardHistory.length > 300) _rewardHistory.shift();
 
-  // Track entropy
+  // Track entropy (7 actions: local, 5 DCs, hold)
   _policyEntropy = 0;
-  for (let a = 0; a < N_ACTIONS; a++) {
+  for (let a = 0; a < 7; a++) {
     if (probs[a] > 1e-8) _policyEntropy -= probs[a] * Math.log(probs[a]);
+  }
+  // Debug: log entropy values for first 10 steps
+  if (_stepCount < 10) {
+    console.log(`Step ${_stepCount}: entropy=${_policyEntropy.toFixed(3)}, agent=${_selectedAgent}, probs=[${probs.map(p => p.toFixed(2)).join(',')}]`);
   }
 
   _stepCount++;
@@ -727,7 +789,7 @@ export function agentDecide(job, snap) {
   const confidence = Math.min(0.98, Math.max(0.5, prob * 1.3 + 0.3));
 
   let reason = '';
-  if (_nnLoaded) {
+  if (_nnLoadedPPO) {
     const holdPct = (holdProb * 100).toFixed(0);
     const localPct = (localProb * 100).toFixed(0);
     reason = `π(${LOC_IDS[action]}|s)=${(prob * 100).toFixed(0)}%, V=${value.toFixed(1)}, hold=${holdPct}%, local=${localPct}%. `;
@@ -743,7 +805,7 @@ export function agentDecide(job, snap) {
       : destLoc.primary === 'wind' && ds.wind > 5
       ? `Wind ${ds.wind.toFixed(1)} m/s`
       : `Low carbon ${Math.round(ds.carbon)} gCO₂`;
-    reason += `→ ${destLoc.name}: ${tag}. ♻${(ds.rf * 100).toFixed(0)}%.`;
+    reason += ` to ${destLoc.name}: ${tag}. Renewable ${(ds.rf * 100).toFixed(0)}%.`;
   }
   reason += ` [Step ${_stepCount}, 5000ep NN]`;
 
@@ -752,16 +814,154 @@ export function agentDecide(job, snap) {
     destCarbon: ds.carbon, originCarbon: origin.carbon,
     destSolar: ds.solar, destWind: ds.wind, destRF: ds.rf,
     saving,
-    policySource: _nnLoaded ? (prob > 0.4 ? 'ppo_confident' : 'ppo_exploring') : 'ppo_exploring',
+    policySource: _nnLoadedPPO ? (prob > 0.4 ? 'ppo_confident' : 'ppo_exploring') : 'ppo_exploring',
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
+function agentDecideDQN(job, snap) {
+  // DQN decision logic (simplified - routes based on Q-values)
+  if (job.type === 'PINNED') {
+    const s = snap[job.origin];
+    return {
+      dest: job.origin, confidence: 1.0,
+      reason: 'Pinned: must process locally',
+      destCarbon: s.carbon, originCarbon: s.carbon,
+      destSolar: s.solar, destWind: s.wind, destRF: s.rf,
+      saving: 0, policySource: 'constraint',
+    };
+  }
+
+  const feasible = [];
+  for (let a = 0; a < N_ACTIONS; a++) {
+    const locId = LOC_IDS[a];
+    const s = snap[locId];
+    if (!s) continue;
+    if (s.util > 0.92) continue;
+    if (job.type === 'SEMI_FLEX' && locId !== job.origin) {
+      if (job.procTime + 0.015 > job.maxLatency) continue;
+    }
+    feasible.push(a);
+  }
+  if (feasible.length === 0) feasible.push(LOC_IDS.indexOf(job.origin));
+
+  // For now, use greedy logic for DQN (since DQN routing is complex)
+  let bestAction = feasible[0];
+  let bestCarbon = snap[LOC_IDS[bestAction]].carbon;
+  for (const a of feasible) {
+    const carbon = snap[LOC_IDS[a]].carbon;
+    if (carbon < bestCarbon) {
+      bestCarbon = carbon;
+      bestAction = a;
+    }
+  }
+
+  const origin = snap[job.origin];
+  const ds = snap[LOC_IDS[bestAction]];
+  const saving = Math.round((origin.carbon - ds.carbon) * job.compute / 1000);
+
+  return {
+    dest: LOC_IDS[bestAction], confidence: 0.7,
+    reason: 'DQN: value-based routing',
+    destCarbon: ds.carbon, originCarbon: origin.carbon,
+    destSolar: ds.solar, destWind: ds.wind, destRF: ds.rf,
+    saving, policySource: 'dqn',
+  };
+}
+
+function agentDecideGreedy(job, snap) {
+  // Greedy: always pick lowest-carbon DC
+  if (job.type === 'PINNED') {
+    const s = snap[job.origin];
+    return {
+      dest: job.origin, confidence: 1.0,
+      reason: 'Pinned: must process locally',
+      destCarbon: s.carbon, originCarbon: s.carbon,
+      destSolar: s.solar, destWind: s.wind, destRF: s.rf,
+      saving: 0, policySource: 'constraint',
+    };
+  }
+
+  const feasible = [];
+  for (let a = 0; a < N_ACTIONS; a++) {
+    const locId = LOC_IDS[a];
+    const s = snap[locId];
+    if (!s) continue;
+    if (s.util > 0.92) continue;
+    if (job.type === 'SEMI_FLEX' && locId !== job.origin) {
+      if (job.procTime + 0.015 > job.maxLatency) continue;
+    }
+    feasible.push(a);
+  }
+  if (feasible.length === 0) feasible.push(LOC_IDS.indexOf(job.origin));
+
+  let bestAction = feasible[0];
+  let bestCarbon = snap[LOC_IDS[bestAction]].carbon;
+  for (const a of feasible) {
+    const carbon = snap[LOC_IDS[a]].carbon;
+    if (carbon < bestCarbon) {
+      bestCarbon = carbon;
+      bestAction = a;
+    }
+  }
+
+  const origin = snap[job.origin];
+  const ds = snap[LOC_IDS[bestAction]];
+  const saving = Math.round((origin.carbon - ds.carbon) * job.compute / 1000);
+
+  return {
+    dest: LOC_IDS[bestAction], confidence: 0.95,
+    reason: 'Greedy: minimize carbon',
+    destCarbon: ds.carbon, originCarbon: origin.carbon,
+    destSolar: ds.solar, destWind: ds.wind, destRF: ds.rf,
+    saving, policySource: 'greedy',
+  };
+}
+
+function agentDecideRandom(job, snap) {
+  // Random: picks uniformly from feasible DCs
+  if (job.type === 'PINNED') {
+    const s = snap[job.origin];
+    return {
+      dest: job.origin, confidence: 1.0,
+      reason: 'Pinned: must process locally',
+      destCarbon: s.carbon, originCarbon: s.carbon,
+      destSolar: s.solar, destWind: s.wind, destRF: s.rf,
+      saving: 0, policySource: 'constraint',
+    };
+  }
+
+  const feasible = [];
+  for (let a = 0; a < N_ACTIONS; a++) {
+    const locId = LOC_IDS[a];
+    const s = snap[locId];
+    if (!s) continue;
+    if (s.util > 0.92) continue;
+    if (job.type === 'SEMI_FLEX' && locId !== job.origin) {
+      if (job.procTime + 0.015 > job.maxLatency) continue;
+    }
+    feasible.push(a);
+  }
+  if (feasible.length === 0) feasible.push(LOC_IDS.indexOf(job.origin));
+
+  // Random selection
+  const action = feasible[Math.floor(Math.random() * feasible.length)];
+  const origin = snap[job.origin];
+  const ds = snap[LOC_IDS[action]];
+  const saving = Math.round((origin.carbon - ds.carbon) * job.compute / 1000);
+
+  return {
+    dest: LOC_IDS[action], confidence: 1 / feasible.length,
+    reason: 'Random: uniform selection',
+    destCarbon: ds.carbon, originCarbon: origin.carbon,
+    destSolar: ds.solar, destWind: ds.wind, destRF: ds.rf,
+    saving, policySource: 'random',
+  };
+}
+
 // BASELINE AGENT (shadow — run on same job, don't affect state)
 //
 // Random: picks a random DC
 // This lets us show "what would have happened without RL"
-// ═══════════════════════════════════════════════════════════════
 
 function randomBaseline(job, snap) {
   // Uniform random among feasible DCs
@@ -792,9 +992,7 @@ function initBaselineMetrics() {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
 // HOLD QUEUE & QUEUE COMPOSITION
-// ═══════════════════════════════════════════════════════════════
 
 let _holdQueue = [];       // [{job, heldAt, holdSteps, reason}]
 let _jobQueue  = [];       // upcoming jobs waiting to be processed
@@ -850,9 +1048,7 @@ function releaseHeldJobs(snap) {
   return released;
 }
 
-// ═══════════════════════════════════════════════════════════════
 // SIMULATION STEP
-// ═══════════════════════════════════════════════════════════════
 
 export function createInitialState() {
   const utilisations = {};
@@ -929,9 +1125,9 @@ export function simulationStep(prevState) {
   // 4. Agent decision
   const decision = agentDecide(job, _snapshot);
 
-  // 4a. Check if NN wants to HOLD this job
+  // 4a. Check if PPO wants to HOLD this job
   let held = false;
-  if (_nnLoaded && job.type === 'FLEXIBLE') {
+  if (_selectedAgent === 'PPO' && _nnLoadedPPO && job.type === 'FLEXIBLE') {
     const features = extractFeatures47(_snapshot, job.origin);
     const result = nnForward(features);
     const carbons = LOC_IDS.map(id => _snapshot[id]?.carbon ?? 999);
@@ -956,7 +1152,7 @@ export function simulationStep(prevState) {
     }
   }
 
-  // ── 4b. Shadow baseline decision (same job, same snapshot) ──
+  // 4b. Shadow baseline decision (same job, same snapshot)
   const randomDest = randomBaseline(job, _snapshot);
 
   const originCarbon = _snapshot[job.origin].carbon;

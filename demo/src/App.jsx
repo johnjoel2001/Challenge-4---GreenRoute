@@ -13,18 +13,42 @@ import Timeline from './components/Timeline';
 import TrainingInfo from './components/TrainingInfo';
 import WeatherTicker from './components/WeatherTicker';
 import useSimulation from './hooks/useSimulation';
-import { loadTrainedPolicy, isPolicyLoaded, getTrainingMeta, getFinalMetrics, getTrainingCurves } from './simulation/engine';
+import { loadTrainedPolicy, isPolicyLoaded, getTrainingMeta, getFinalMetrics, getTrainingCurves, setSelectedAgent as setEngineAgent } from './simulation/engine';
 
 export default function App() {
   const [showIntro, setShowIntro] = useState(true);
   const [policyLoaded, setPolicyLoaded] = useState(false);
   const [showTraining, setShowTraining] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState('PPO');
+  const [agents, setAgents] = useState(['PPO', 'Q-Learning', 'DQN', 'Random', 'Greedy']);
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('darkMode');
+    return saved !== null ? JSON.parse(saved) : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
   const sim = useSimulation();
 
   // Load trained policy on mount
   useEffect(() => {
-    loadTrainedPolicy().then(() => setPolicyLoaded(isPolicyLoaded()));
+    loadTrainedPolicy().then((data) => {
+      setPolicyLoaded(isPolicyLoaded());
+      if (data?.metadata?.agents_trained) {
+        setAgents(data.metadata.agents_trained);
+        const firstAgent = data.metadata.agents_trained[0] || 'PPO';
+        setSelectedAgent(firstAgent);
+        setEngineAgent(firstAgent);
+      }
+    });
   }, []);
+
+  // Persist dark mode preference and apply to document
+  useEffect(() => {
+    localStorage.setItem('darkMode', JSON.stringify(darkMode));
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
 
   // Skip intro on keypress
   const handleKeyDown = useCallback(() => {
@@ -41,7 +65,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-bg-primary">
+    <div className="flex flex-col h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       {/* Compact header */}
       <Header
         simState={sim.simState}
@@ -52,20 +76,29 @@ export default function App() {
         reset={sim.reset}
         policyLoaded={policyLoaded}
         onShowTraining={() => setShowTraining((v) => !v)}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+        agents={agents}
+        selectedAgent={selectedAgent}
+        onAgentChange={(agent) => {
+          setSelectedAgent(agent);
+          setEngineAgent(agent);
+        }}
       />
 
       {/* Weather event alerts */}
       <WeatherTicker />
 
       {/* Main area: immersive map + side panel */}
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="flex flex-1 overflow-hidden relative flex-col lg:flex-row">
         {/* Full-screen map */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative min-h-0">
           <MapCanvas
             simState={sim.simState}
             packets={sim.packets}
             advancePackets={sim.advancePackets}
             paused={sim.paused}
+            darkMode={darkMode}
           />
 
           {/* Training info overlay (floats on map) */}
@@ -79,9 +112,9 @@ export default function App() {
           )}
         </div>
 
-        {/* Side panel — compact, scrollable */}
-        <div className="w-[360px] flex flex-col border-l border-white/[0.06] bg-gradient-to-b from-[#0a0e1a]/98 to-[#0d1220]/98 backdrop-blur-xl overflow-y-auto">
-          <LearningPanel simState={sim.simState} />
+        {/* Side panel — responsive, scrollable */}
+        <div className="w-full lg:w-96 flex flex-col border-t lg:border-t-0 lg:border-l border-slate-200 dark:border-white/[0.1] bg-white dark:bg-slate-900/50 overflow-y-auto max-h-64 lg:max-h-none">
+          <LearningPanel simState={sim.simState} selectedAgent={selectedAgent} />
           <QueuePanel simState={sim.simState} />
           <JobPanel job={sim.currentJob} />
           <DecisionPanel decision={sim.currentDecision} job={sim.currentJob} />
@@ -91,7 +124,7 @@ export default function App() {
       </div>
 
       {/* Live baseline comparison */}
-      <BaselineComparison simState={sim.simState} />
+      <BaselineComparison simState={sim.simState} darkMode={darkMode} />
 
       {/* 24-hour timeline strip */}
       <Timeline simState={sim.simState} />
